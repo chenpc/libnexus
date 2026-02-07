@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package nexus;
+
+service NexusService {
+    rpc Execute(CommandRequest) returns (CommandResponse);
+    rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
+}
+
+message CommandRequest {
+    string service = 1;
+    string action = 2;
+    repeated string args = 3;
+}
+
+message CommandResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message ListServicesRequest {}
+
+message ListServicesResponse {
+    repeated ServiceInfo services = 1;
+}
+
+message ServiceInfo {
+    string name = 1;
+    repeated CommandDef commands = 2;
+    string description = 3;
+}
+
+message ArgDef {
+    string name = 1;
+    string hint = 2;
+    string completer = 3;
+    string description = 4;
+}
+
+message CommandDef {
+    string name = 1;
+    repeated ArgDef args = 2;
+    string description = 3;
+}

@@ -1,0 +1,22 @@
+[workspace]
+members = ["nexus-derive"]
+
+[package]
+name = "libnexus"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nexus-derive = { path = "nexus-derive" }
+tonic = "0.12"
+prost = "0.13"
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+anyhow = "1"
+rustyline = "15"
+tokio-stream = { version = "0.1", features = ["net"] }
+tower = "0.4"
+hyper-util = "0.1"
+
+[build-dependencies]
+tonic-build = "0.12"
