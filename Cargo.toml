@@ -1,6 +1,3 @@
-[workspace]
-members = ["nexus-derive"]
-
 [package]
 name = "libnexus"
 version = "0.1.0"
