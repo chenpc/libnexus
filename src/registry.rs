@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
 
@@ -64,7 +64,7 @@ impl Registry {
         let service = self
             .services
             .get(service_name)
-            .ok_or_else(|| anyhow::anyhow!("unknown service '{}'", service_name))?;
+            .ok_or_else(|| format!("unknown service '{}'", service_name))?;
         service.execute(action, args).await
     }
 

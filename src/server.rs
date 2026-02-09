@@ -34,7 +34,7 @@ impl NexusServer {
     /// If `addr` contains `:` it is treated as a TCP socket address (e.g.
     /// `[::1]:50051`).  Otherwise it is treated as a Unix domain socket path
     /// (e.g. `/tmp/nexus.sock`).
-    pub async fn serve(self, addr: &str) -> anyhow::Result<()> {
+    pub async fn serve(self, addr: &str) -> crate::Result<()> {
         let grpc_service = NexusGrpcService {
             registry: self.registry,
         };
