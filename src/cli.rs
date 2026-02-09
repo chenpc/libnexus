@@ -285,7 +285,7 @@ impl NexusCli {
         }
     }
 
-    pub async fn run(self) -> crate::Result<()> {
+    pub async fn run(self) -> anyhow::Result<()> {
         let mut client = if self.addr.contains(':') {
             let addr = if self.addr.starts_with("http://") || self.addr.starts_with("https://") {
                 self.addr.clone()

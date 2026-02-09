@@ -137,7 +137,7 @@ pub fn nexus_service(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     .map(|(i, name)| {
                         quote! {
                             let #name = args.get(#i)
-                                .ok_or_else(|| format!(
+                                .ok_or_else(|| anyhow::anyhow!(
                                     "missing argument '{}' (expected {} args)",
                                     stringify!(#name),
                                     #num_params
@@ -150,7 +150,7 @@ pub fn nexus_service(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 match_arms.push(quote! {
                     #method_name_str => {
                         #(#param_extractions)*
-                        Ok(self.#method_name(#(#param_names),*).await?)
+                        self.#method_name(#(#param_names),*).await
                     }
                 });
 
@@ -206,10 +206,10 @@ pub fn nexus_service(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 vec![#(#command_infos),*]
             }
 
-            async fn execute(&self, action: &str, args: Vec<String>) -> libnexus::Result<String> {
+            async fn execute(&self, action: &str, args: Vec<String>) -> anyhow::Result<String> {
                 match action {
                     #(#match_arms,)*
-                    _ => Err(format!("unknown command '{}'", action).into()),
+                    _ => Err(anyhow::anyhow!("unknown command '{}'", action)),
                 }
             }
         }
