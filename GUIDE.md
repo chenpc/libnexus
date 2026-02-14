@@ -99,7 +99,7 @@ Mark methods with `#[command]`. Each command must:
 
 - Take `&self` as the first parameter
 - Be `async`
-- Return `anyhow::Result<String>`
+- Return `anyhow::Result<T>` where `T` is any supported return type (see below)
 - Have all other parameters as `String`
 
 ```rust
@@ -118,6 +118,95 @@ Commands are invoked in the CLI as `<service> <command> [args...]`:
 cli> myservice my_command foo bar
 got foo and bar
 ```
+
+## Return Types and Serialization
+
+Commands can return different types. The framework automatically serializes non-String return types to pretty-printed JSON via `serde`.
+
+### `String` — Plain text (no serialization)
+
+```rust
+#[command]
+async fn hello(&self, name: String) -> anyhow::Result<String> {
+    Ok(format!("Hello, {}!", name))
+}
+```
+
+Output: `Hello, world!`
+
+### Any `Serialize` type — Auto-serialized to JSON
+
+Return any type that implements `serde::Serialize` and the framework handles serialization automatically. No need to call `serde_json` yourself.
+
+```rust
+#[derive(serde::Serialize)]
+struct DeviceInfo {
+    size: Option<String>,
+    model: Option<String>,
+}
+
+#[command]
+async fn info(&self, device: String) -> anyhow::Result<DeviceInfo> {
+    Ok(DeviceInfo { size: Some("1G".into()), model: None })
+}
+```
+
+Output:
+
+```json
+{
+  "size": "1G",
+  "model": null
+}
+```
+
+### `NamedMap<T>` — Named resource listings
+
+Use `libnexus::NamedMap<T>` (a `BTreeMap<String, T>`) for commands that list named resources. Keys are sorted alphabetically and become the top-level JSON object keys. The CLI also uses these keys for tab completion.
+
+```rust
+use libnexus::NamedMap;
+
+#[derive(serde::Serialize)]
+struct DiskInfo {
+    size: Option<String>,
+    #[serde(rename = "type")]
+    dtype: Option<String>,
+}
+
+#[command]
+async fn list(&self) -> anyhow::Result<NamedMap<DiskInfo>> {
+    let mut map = NamedMap::new();
+    map.insert("vdb".into(), DiskInfo { size: Some("1G".into()), dtype: Some("disk".into()) });
+    map.insert("vdc".into(), DiskInfo { size: Some("2G".into()), dtype: Some("disk".into()) });
+    Ok(map)
+}
+```
+
+Output:
+
+```json
+{
+  "vdb": {
+    "size": "1G",
+    "type": "disk"
+  },
+  "vdc": {
+    "size": "2G",
+    "type": "disk"
+  }
+}
+```
+
+When another command uses `#[arg(complete = "block.list")]`, the CLI extracts the JSON object keys (`vdb`, `vdc`) as tab-completion candidates.
+
+### Summary
+
+| Return type | Serialization | CLI completion |
+|---|---|---|
+| `String` | None (printed as-is) | Comma-separated values |
+| `T: Serialize` | Auto JSON pretty-print | N/A |
+| `NamedMap<T>` | Auto JSON pretty-print | Object keys used as completions |
 
 ## Argument Metadata with `#[arg(...)]`
 
@@ -177,11 +266,13 @@ async fn delete(
 ) -> anyhow::Result<String> { ... }
 ```
 
-When the user presses Tab on this argument, the CLI calls `volume list` on the server, splits the response by commas, and offers matching values.
+When the user presses Tab on this argument, the CLI calls `volume list` on the server and extracts completion candidates:
+- If the response is a JSON object (e.g. from `NamedMap<T>`), the object **keys** are used as completions
+- Otherwise, the response is split by commas as a fallback
 
 The referenced command must:
 - Take no arguments
-- Return a comma-separated string (e.g. `"vol0, vol1, vol2"`)
+- Return either a `NamedMap<T>` (recommended) or a comma-separated string
 
 You can reference commands from any registered service, including the current one:
 

@@ -96,13 +96,19 @@ impl NexusHelper {
             .join()
         });
         match result {
-            Ok(Ok(resp)) => resp
-                .into_inner()
-                .message
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect(),
+            Ok(Ok(resp)) => {
+                let message = resp.into_inner().message;
+                // If the response is a JSON object, extract the keys as completions.
+                if let Ok(serde_json::Value::Object(map)) = serde_json::from_reader(message.as_bytes()) {
+                    map.keys().cloned().collect()
+                } else {
+                    message
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                }
+            }
             _ => vec![],
         }
     }
@@ -382,7 +388,11 @@ impl NexusCli {
                 .into_inner();
 
             if response.success {
-                println!("{}", response.message);
+                if let Ok(json) = serde_json::from_reader::<_, serde_json::Value>(response.message.as_bytes()) {
+                    println!("{}", serde_json::to_string_pretty(&json).unwrap());
+                } else {
+                    println!("{}", response.message);
+                }
             } else {
                 println!("Error: {}", response.message);
             }

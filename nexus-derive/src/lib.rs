@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Attribute, FnArg, ImplItem, ItemImpl, Pat};
+use syn::{parse_macro_input, Attribute, FnArg, ImplItem, ItemImpl, Pat, ReturnType, Type};
 
 /// Extract doc comment strings from attributes.
 fn extract_doc_comment(attrs: &[Attribute]) -> String {
@@ -72,6 +72,30 @@ fn parse_arg_attr(attrs: &[Attribute]) -> ArgMeta {
     }
 
     meta
+}
+
+/// Check if a method returns `anyhow::Result<String>` (i.e. the inner type is `String`).
+fn returns_string(sig: &syn::Signature) -> bool {
+    let ReturnType::Type(_, ty) = &sig.output else {
+        return false;
+    };
+    // Look for Result<String> or anyhow::Result<String>
+    let Type::Path(type_path) = ty.as_ref() else {
+        return false;
+    };
+    let last_seg = type_path.path.segments.last().unwrap();
+    if last_seg.ident != "Result" {
+        return false;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &last_seg.arguments else {
+        return false;
+    };
+    if let Some(syn::GenericArgument::Type(Type::Path(inner))) = args.args.first() {
+        if let Some(seg) = inner.path.segments.last() {
+            return seg.ident == "String";
+        }
+    }
+    false
 }
 
 /// Strip `#[arg(...)]` attributes from a function signature's parameters.
@@ -147,10 +171,19 @@ pub fn nexus_service(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     })
                     .collect();
 
+                let call = if returns_string(&method.sig) {
+                    quote! { self.#method_name(#(#param_names),*).await }
+                } else {
+                    quote! {
+                        self.#method_name(#(#param_names),*).await
+                            .and_then(|v| libnexus::serialize_response(&v))
+                    }
+                };
+
                 match_arms.push(quote! {
                     #method_name_str => {
                         #(#param_extractions)*
-                        self.#method_name(#(#param_names),*).await
+                        #call
                     }
                 });
 
