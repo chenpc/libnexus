@@ -80,7 +80,8 @@ impl NexusHelper {
     /// command on the server. Spawns a scoped thread to bridge sync -> async.
     fn fetch_completions(&self, completer: &str) -> Vec<String> {
         let Some((svc, cmd)) = completer.split_once('.') else {
-            return vec![];
+            // No dot — treat as static comma-separated list.
+            return completer.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
         };
         let mut client = self.client.clone();
         let request = CommandRequest {
@@ -211,13 +212,25 @@ impl Completer for NexusHelper {
                     (parts.len() - 3, parts.last().copied().unwrap_or(""))
                 };
 
-                if let Some(arg_def) = args.get(arg_index) {
+                // If arg_index exceeds defined args, clamp to last arg (variadic).
+                let clamped = arg_index.min(args.len().saturating_sub(1));
+                if let Some(arg_def) = args.get(clamped) {
                     if !arg_def.completer.is_empty() {
                         let values = self.fetch_completions(&arg_def.completer);
+                        // For variadic args, exclude values already typed.
+                        let already_used: std::collections::HashSet<&str> = if arg_index >= args.len() {
+                            // parts[2..] are the typed args; variadic starts at parts[2 + args.len() - 1]
+                            let var_start = 2 + args.len() - 1;
+                            let end = if line.ends_with(' ') { parts.len() } else { parts.len() - 1 };
+                            parts.get(var_start..end).unwrap_or(&[]).iter().copied().collect()
+                        } else {
+                            std::collections::HashSet::new()
+                        };
                         let start = pos - prefix.len();
                         let candidates: Vec<Pair> = values
                             .iter()
                             .filter(|v| v.starts_with(prefix))
+                            .filter(|v| !already_used.contains(v.as_str()))
                             .map(|v| Pair {
                                 display: v.clone(),
                                 replacement: v.clone(),
@@ -252,23 +265,51 @@ impl Hinter for NexusHelper {
             .arg_info
             .get(&(service.to_string(), command.to_string()))?;
 
+        // Which arg position the cursor is on.
+        let current_arg_idx = if line.ends_with(' ') {
+            parts.len() - 2
+        } else {
+            parts.len().saturating_sub(3)
+        };
+
+        // Get current arg's doc (clamped for variadic).
+        let clamped_idx = current_arg_idx.min(args.len().saturating_sub(1));
+        let doc = args.get(clamped_idx)
+            .map(|a| a.description.as_str())
+            .unwrap_or("");
+
         // How many args are already fully typed.
         let hint_start = parts.len() - 2;
 
         let remaining: Vec<String> = args
             .iter()
             .skip(hint_start)
-            .map(|a| format!("<{}>", Self::arg_label(a)))
+            .map(|a| {
+                let label = Self::arg_label(a);
+                if label.starts_with('<') { label.to_string() } else { format!("<{}>", label) }
+            })
             .collect();
 
-        if remaining.is_empty() {
-            return None;
-        }
-
-        let hint = if line.ends_with(' ') {
-            remaining.join(" ")
+        let param_hint = if remaining.is_empty() {
+            // If past all defined args, repeat the last arg hint (variadic).
+            let last = args.last()?;
+            let label = Self::arg_label(last);
+            if !label.ends_with("...") {
+                return None;
+            }
+            if label.starts_with('<') { label.to_string() } else { format!("<{}>", label) }
         } else {
-            format!(" {}", remaining.join(" "))
+            remaining.join(" ")
+        };
+
+        let hint = if doc.is_empty() {
+            if line.ends_with(' ') { param_hint } else { format!(" {}", param_hint) }
+        } else {
+            if line.ends_with(' ') {
+                format!("{}  ({})", param_hint, doc)
+            } else {
+                format!(" {}  ({})", param_hint, doc)
+            }
         };
 
         Some(ArgHint(hint))
@@ -419,7 +460,7 @@ fn print_service_help(services: &[ServiceInfo], name: &str) {
             .iter()
             .map(|a| {
                 let label = if a.hint.is_empty() { &a.name } else { &a.hint };
-                format!("<{}>", label)
+                if label.starts_with('<') { label.to_string() } else { format!("<{}>", label) }
             })
             .collect::<Vec<_>>()
             .join(" ");
@@ -460,7 +501,7 @@ fn print_help(services: &[ServiceInfo]) {
                 .iter()
                 .map(|a| {
                     let label = if a.hint.is_empty() { &a.name } else { &a.hint };
-                    format!("<{}>", label)
+                    if label.starts_with('<') { label.to_string() } else { format!("<{}>", label) }
                 })
                 .collect::<Vec<_>>()
                 .join(" ");

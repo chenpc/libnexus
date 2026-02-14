@@ -254,19 +254,28 @@ async fn setip(
     <mask> - Subnet mask (e.g. 255.255.255.0)
 ```
 
-### complete — Dynamic Tab Completion
+### complete — Tab Completion
 
-Reference another service's command to populate tab completions. The format is `"service.command"`. The CLI calls that command on the server and parses the comma-separated result as completion candidates.
+The `complete` field supports two forms:
+
+#### Static list
+
+Provide an inline array of string literals. These are offered directly as tab completions with no server call:
 
 ```rust
-#[command]
-async fn delete(
-    &self,
-    #[arg(hint = "volume name", complete = "volume.list")] name: String,
-) -> anyhow::Result<String> { ... }
+#[arg(complete = ["mirror", "raidz", "raidz2", "raidz3"])]
+raid_type: String,
 ```
 
-When the user presses Tab on this argument, the CLI calls `volume list` on the server and extracts completion candidates:
+#### Dynamic from a command
+
+Reference another service's command in `"service.command"` format. The CLI calls that command on the server and extracts completion candidates:
+
+```rust
+#[arg(complete = "volume.list")]
+name: String,
+```
+
 - If the response is a JSON object (e.g. from `NamedMap<T>`), the object **keys** are used as completions
 - Otherwise, the response is split by commas as a fallback
 

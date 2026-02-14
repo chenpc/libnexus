@@ -2,6 +2,20 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, Attribute, FnArg, ImplItem, ItemImpl, Pat, ReturnType, Type};
 
+/// Check if a type is `Vec<String>`.
+fn is_vec_string(ty: &Type) -> bool {
+    let Type::Path(type_path) = ty else { return false };
+    let Some(seg) = type_path.path.segments.last() else { return false };
+    if seg.ident != "Vec" { return false; }
+    let syn::PathArguments::AngleBracketed(args) = &seg.arguments else { return false };
+    if let Some(syn::GenericArgument::Type(Type::Path(inner))) = args.args.first() {
+        if let Some(s) = inner.path.segments.last() {
+            return s.ident == "String";
+        }
+    }
+    false
+}
+
 /// Extract doc comment strings from attributes.
 fn extract_doc_comment(attrs: &[Attribute]) -> String {
     attrs
@@ -59,8 +73,16 @@ fn parse_arg_attr(attrs: &[Attribute]) -> ArgMeta {
                     meta.hint = lit.value();
                 } else if nested.path.is_ident("complete") {
                     let value = nested.value()?;
-                    let lit: syn::LitStr = value.parse()?;
-                    meta.completer = lit.value();
+                    if value.peek(syn::token::Bracket) {
+                        let content;
+                        syn::bracketed!(content in value);
+                        let items: syn::punctuated::Punctuated<syn::LitStr, syn::Token![,]> =
+                            content.parse_terminated(|input| input.parse::<syn::LitStr>(), syn::Token![,])?;
+                        meta.completer = items.iter().map(|s| s.value()).collect::<Vec<_>>().join(", ");
+                    } else {
+                        let lit: syn::LitStr = value.parse()?;
+                        meta.completer = lit.value();
+                    }
                 } else if nested.path.is_ident("doc") {
                     let value = nested.value()?;
                     let lit: syn::LitStr = value.parse()?;
@@ -133,6 +155,7 @@ pub fn nexus_service(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 // Collect parameter names, hints, completers, and docs (skip &self).
                 let mut param_names = Vec::new();
                 let mut param_name_strings = Vec::new();
+                let mut param_types: Vec<&Type> = Vec::new();
                 let mut param_hints = Vec::new();
                 let mut param_completers = Vec::new();
                 let mut param_descriptions = Vec::new();
@@ -144,6 +167,7 @@ pub fn nexus_service(_attr: TokenStream, item: TokenStream) -> TokenStream {
                             let arg_meta = parse_arg_attr(&pat_type.attrs);
                             param_names.push(name.clone());
                             param_name_strings.push(name.to_string());
+                            param_types.push(&*pat_type.ty);
                             param_hints.push(arg_meta.hint);
                             param_completers.push(arg_meta.completer);
                             param_descriptions.push(arg_meta.description);
@@ -152,6 +176,7 @@ pub fn nexus_service(_attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
 
                 let num_params = param_names.len();
+                let has_variadic = param_types.last().map_or(false, |ty| is_vec_string(ty));
 
                 // Generate the match arm for execute dispatch.
                 // Each parameter is extracted positionally from the args Vec<String>.
@@ -159,14 +184,28 @@ pub fn nexus_service(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     .iter()
                     .enumerate()
                     .map(|(i, name)| {
-                        quote! {
-                            let #name = args.get(#i)
-                                .ok_or_else(|| anyhow::anyhow!(
-                                    "missing argument '{}' (expected {} args)",
-                                    stringify!(#name),
-                                    #num_params
-                                ))?
-                                .clone();
+                        if has_variadic && i == num_params - 1 {
+                            // Last param is Vec<String> — collect remaining args
+                            quote! {
+                                if args.len() < #i + 1 {
+                                    anyhow::bail!(
+                                        "missing argument '{}' (expected at least {} args)",
+                                        stringify!(#name),
+                                        #num_params
+                                    );
+                                }
+                                let #name = args[#i..].to_vec();
+                            }
+                        } else {
+                            quote! {
+                                let #name = args.get(#i)
+                                    .ok_or_else(|| anyhow::anyhow!(
+                                        "missing argument '{}' (expected {} args)",
+                                        stringify!(#name),
+                                        #num_params
+                                    ))?
+                                    .clone();
+                            }
                         }
                     })
                     .collect();
